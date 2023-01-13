@@ -26,19 +26,26 @@ type (
 		Title string `json:"title,omitempty"`
 		Text  string `json:"text,omitempty"`
 	}
-	Metrics struct { //Структура, хранящая набор метрик
-		idConvCnt    *prometheus.Metric // метрика (счетчик)
-		idConvErrCnt *prometheus.Metric // метрика (счетчик)
-		customDur    *prometheus.Metric
+
+	//Структура, хранящая набор метрик
+	Metrics struct {
+		// метрика - счетчик
+		idConvCnt *prometheus.Metric
+		// метрика - счетчик
+		idConvErrCnt *prometheus.Metric
+		// метрика - гистограмма
+		customDur *prometheus.Metric
 	}
 )
 
 var (
+	// Список пользователей
 	users = []*User{
 		{ID: 1, Name: "Sam", Age: 15},
 		{ID: 2, Name: "John", Age: 22, IsAdult: true},
 		{ID: 3, Name: "Henrik", Age: 39, IsAdult: true},
 	}
+	// Список заметок
 	notes = []*Note{
 		{ID: 1, Title: "Homework", Text: "Math"},
 		{ID: 2, Title: "Game info", Text: "Developer: Arkane Studios"},
@@ -49,12 +56,18 @@ var (
 // Функция - конструктор для создания и инициализации структуры Metrics
 func NewMetrics() *Metrics {
 	return &Metrics{
+		// Метрика, считающая кол - во удачных конвертаций URL - параметра id из строки в целое число
 		idConvCnt: &prometheus.Metric{
-			Name:        "conversions_count",
+			// Название метрики
+			Name: "conversions_count",
+			// Описание метрики
 			Description: "id URL param conversions count",
-			Type:        "counter_vec",
-			Args:        []string{"conv_type", "entity", "result"},
+			// Тип метрики (счетчик с аргументами (лейблами))
+			Type: "counter_vec",
+			// Аргументы (ключи) для лейблов, к которым будут маппиться значения, в зависимости от ситуации
+			Args: []string{"conv_type", "entity", "result"},
 		},
+		// Метрика, считающая кол - во НЕудачных конвертаций URL - параметра id из строки в целое число
 		idConvErrCnt: &prometheus.Metric{
 			Name:        "conversions_err_count",
 			Description: "id URL param conversions err count",
@@ -74,48 +87,60 @@ func NewMetrics() *Metrics {
 // Миддлварь, которая сохраняет структуру Metrics в контекст запроса
 func (m *Metrics) AddCustomMetricsMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
+		// Добавляем указатель на структуру Metrics в контекст
 		c.Set(cKeyMetrics, m)
 		return next(c)
 	}
 }
 
-// Увеличение счетчика и установление
-func (m *Metrics) IncConversionCount(labelOne, labelTwo, labelThree string) {
+// Маппинг лейблов и увеличение счетчика
+func (m *Metrics) IncCounter(metric *prometheus.Metric, labelOne, labelTwo, labelThree string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
 	labels := prom.Labels{"conv_type": labelOne, "entity": labelTwo, "result": labelThree}
-	m.idConvCnt.MetricCollector.(*prom.CounterVec).With(labels).Inc()
-}
-
-// Увеличение счетчика и установление
-func (m *Metrics) IncConversionErrCount(labelOne, labelTwo, labelThree string) {
-	labels := prom.Labels{"conv_type": labelOne, "entity": labelTwo, "result": labelThree}
-	m.idConvErrCnt.MetricCollector.(*prom.CounterVec).With(labels).Inc()
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.CounterVec).With(labels).Inc()
 }
 
 func (m *Metrics) ObserveCustomDur(labelOne, labelTwo string, d time.Duration) {
 	labels := prom.Labels{"label_one": labelOne, "label_two": labelTwo}
-	m.idConvCnt.MetricCollector.(*prom.HistogramVec).With(labels).Observe(d.Seconds())
+	m.customDur.MetricCollector.(*prom.HistogramVec).With(labels).Observe(d.Seconds())
 }
 
-// извлекаем URL-параметр id и на основе результата увеличиваем значение счетчика метрики
+// Извлекаем URL-параметр id и на основе результата увеличиваем значение счетчика метрики
 func extractID(c echo.Context) (int, error) {
-	metrics := c.Get(cKeyMetrics).(*Metrics) // получаем метрики из контекста по ключу
+	// Получаем метрики из контекста по ключу
+	metrics := c.Get(cKeyMetrics).(*Metrics)
+	// Достаем id из URL и преобразовываем в число
 	id, err := strconv.Atoi(c.Param("id"))
+	// Получаем название сущности из URL
+	entity := strings.Split(c.Request().RequestURI[1:], "/")[0]
 	if err != nil {
-		metrics.IncConversionErrCount("Atoi", strings.Split(c.Request().RequestURI, "/")[0], "err") // если ошибка, увеличиваем счетчик метрики, считающей ошибки при извлечении id
+		// Если ошибка, увеличиваем счетчик метрики, считающей ошибки
+		metrics.IncCounter(metrics.idConvErrCnt, "Atoi", entity, "err")
 		return 0, err
 	}
 
-	metrics.IncConversionCount("Atoi", c.Request().RequestURI, c.Param("id")) // если нет ошибки, то увеличиваем счетчик метрики, считающей число корректных извлечений id
+	// Если нет ошибки, то увеличиваем счетчик метрики, считающей число корректных извлечений id
+	metrics.IncCounter(metrics.idConvErrCnt, "Atoi", entity, c.Param("id"))
+	metrics.ObserveCustomDur("l1", "l2", time.Second*10)
 	return id, nil
 }
 
 func main() {
+	// Создаем роутер
 	r := echo.New()
-	m := NewMetrics()                                                                                          // создаем и инициализируем объект, который хранит набор метрик
-	p := prometheus.NewPrometheus("demo", nil, []*prometheus.Metric{m.idConvCnt, m.idConvErrCnt, m.customDur}) // создаем миддлварь prometheus для echo-роутера
-	p.Use(r)                                                                                                   // применяем миддлварь для echo-роутера
-	r.Use(m.AddCustomMetricsMiddleware)                                                                        // включаем миддлварь с кастомными метриками в цепь других миддлварей, которые стартуют после echo-роутера
+	// Создаем и инициализируем объект, который хранит набор метрик
+	m := NewMetrics()
+	// Создаем миддлварь prometheus для echo-роутера
+	p := prometheus.NewPrometheus("demo", nil, []*prometheus.Metric{m.idConvCnt, m.idConvErrCnt, m.customDur})
+	// Добавляем миддлварь для echo-роутера
+	p.Use(r)
+	// Включаем миддлварь с кастомными метриками в цепь других миддлварей, которые стартуют после echo-роутера
+	r.Use(m.AddCustomMetricsMiddleware)
 
+	//Enpoints
+
+	//Get user by ID
 	r.GET("/user/get/:id", func(c echo.Context) error {
 		id, err := extractID(c)
 		if err != nil {
@@ -130,6 +155,8 @@ func main() {
 
 		return c.JSON(http.StatusNotFound, "user does not exist")
 	})
+
+	//Get note by ID
 	r.GET("/note/get/:id", func(c echo.Context) error {
 		id, err := extractID(c)
 		if err != nil {
@@ -142,23 +169,8 @@ func main() {
 			}
 		}
 
-		return c.JSON(http.StatusNotFound, "user does not exist")
-	})
-	r.GET("/user/get-list", func(c echo.Context) error {
-		if users != nil {
-			return c.JSON(http.StatusOK, users)
-		}
-
-		return c.JSON(http.StatusNotFound, "users does not exist")
-	})
-	r.GET("/note/get-list", func(c echo.Context) error {
-		if users != nil {
-			return c.JSON(http.StatusOK, notes)
-		}
-
-		return c.JSON(http.StatusNotFound, "notes does not exist")
+		return c.JSON(http.StatusNotFound, "note does not exist")
 	})
 
-	// fmt.Println("Server is starting...")
 	r.Logger.Fatal(r.Start(":8080"))
 }
