@@ -158,7 +158,6 @@ func main() {
 
 	//Get note by ID
 	r.GET("/note/get/:id", func(c echo.Context) error {
-		start := time.Now()
 		id, err := extractID(c)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, err.Error())
