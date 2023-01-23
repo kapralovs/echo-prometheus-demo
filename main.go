@@ -121,7 +121,7 @@ func extractID(c echo.Context) (int, error) {
 	}
 
 	// Если нет ошибки, то увеличиваем счетчик метрики, считающей число корректных извлечений id
-	metrics.IncCounter(metrics.idConvErrCnt, "Atoi", entity, c.Param("id"))
+	metrics.IncCounter(metrics.idConvCnt, "Atoi", entity, c.Param("id"))
 	metrics.ObserveCustomDur("l1", "l2", time.Second*10)
 	return id, nil
 }
@@ -158,6 +158,7 @@ func main() {
 
 	//Get note by ID
 	r.GET("/note/get/:id", func(c echo.Context) error {
+		start := time.Now()
 		id, err := extractID(c)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, err.Error())
