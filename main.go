@@ -34,7 +34,11 @@ type (
 		// метрика - счетчик
 		idConvErrCnt *prometheus.Metric
 		// метрика - гистограмма
-		customDur *prometheus.Metric
+		getEntityReqDuration *prometheus.Metric
+		// метрика - измеритель
+		activeRequests     *prometheus.Metric
+		activeUserRequests *prometheus.Metric
+		activeNoteRequests *prometheus.Metric
 	}
 )
 
@@ -74,12 +78,30 @@ func NewMetrics() *Metrics {
 			Type:        "counter_vec",
 			Args:        []string{"conv_type", "entity", "result"},
 		},
-		customDur: &prometheus.Metric{
-			Name:        "custom_duration_seconds",
-			Description: "Custom duration observations.",
+		getEntityReqDuration: &prometheus.Metric{
+			Name:        "get_entity_req_duration",
+			Description: "Custom get entity request duration observations.",
 			Type:        "histogram_vec",
-			Args:        []string{"label_one", "label_two"},
+			Args:        []string{"method", "entity"},
 			Buckets:     prom.DefBuckets, // or your Buckets
+		},
+		activeRequests: &prometheus.Metric{
+			Name:        "active_requests",
+			Description: "Count of all active requests",
+			Type:        "gauge_vec",
+			Args:        []string{"entity", "id"},
+		},
+		activeUserRequests: &prometheus.Metric{
+			Name:        "active_user_requests",
+			Description: "Count of an active user requests",
+			Type:        "gauge_vec",
+			Args:        []string{"id"},
+		},
+		activeNoteRequests: &prometheus.Metric{
+			Name:        "active_note_requests",
+			Description: "Count of an active user requests",
+			Type:        "gauge_vec",
+			Args:        []string{"id"},
 		},
 	}
 }
@@ -101,15 +123,55 @@ func (m *Metrics) IncCounter(metric *prometheus.Metric, labelOne, labelTwo, labe
 	metric.MetricCollector.(*prom.CounterVec).With(labels).Inc()
 }
 
-func (m *Metrics) ObserveCustomDur(labelOne, labelTwo string, d time.Duration) {
-	labels := prom.Labels{"label_one": labelOne, "label_two": labelTwo}
-	m.customDur.MetricCollector.(*prom.HistogramVec).With(labels).Observe(d.Seconds())
+func (m *Metrics) ObserveGetEntityRequestDuration(methodLabel, entityLabel string, d time.Duration) {
+	labels := prom.Labels{"method": methodLabel, "entity": entityLabel}
+	m.getEntityReqDuration.MetricCollector.(*prom.HistogramVec).With(labels).Observe(float64(d.Milliseconds()))
+}
+
+func (m *Metrics) IncActiveRequestsGauge(metric *prometheus.Metric, entityLabel, idLabel string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
+	labels := prom.Labels{"entity": entityLabel, "id": idLabel}
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.GaugeVec).With(labels).Inc()
+}
+
+func (m *Metrics) DecActiveRequestsGauge(metric *prometheus.Metric, entityLabel, idLabel string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
+	labels := prom.Labels{"entity": entityLabel, "id": idLabel}
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.GaugeVec).With(labels).Dec()
+}
+
+func (m *Metrics) IncActiveUserRequestsGauge(metric *prometheus.Metric, idLabel string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
+	labels := prom.Labels{"id": idLabel}
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.GaugeVec).With(labels).Inc()
+}
+
+func (m *Metrics) DecActiveUserRequestsGauge(metric *prometheus.Metric, idLabel string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
+	labels := prom.Labels{"id": idLabel}
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.GaugeVec).With(labels).Dec()
+}
+
+func (m *Metrics) IncActiveNoteRequestsGauge(metric *prometheus.Metric, idLabel string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
+	labels := prom.Labels{"id": idLabel}
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.GaugeVec).With(labels).Inc()
+}
+
+func (m *Metrics) DecActiveNoteRequestsGauge(metric *prometheus.Metric, idLabel string) {
+	// Маппим значения лейблов из аргументов метода на соответствующие ключи
+	labels := prom.Labels{"id": idLabel}
+	// Добавляем мапу лейблов для метрики и увеличиваем значение счетчика метрики на 1
+	metric.MetricCollector.(*prom.GaugeVec).With(labels).Dec()
 }
 
 // Извлекаем URL-параметр id и на основе результата увеличиваем значение счетчика метрики
-func extractID(c echo.Context) (int, error) {
-	// Получаем метрики из контекста по ключу
-	metrics := c.Get(cKeyMetrics).(*Metrics)
+func extractID(c echo.Context, metrics *Metrics) (int, error) {
 	// Достаем id из URL и преобразовываем в число
 	id, err := strconv.Atoi(c.Param("id"))
 	// Получаем название сущности из URL
@@ -122,7 +184,7 @@ func extractID(c echo.Context) (int, error) {
 
 	// Если нет ошибки, то увеличиваем счетчик метрики, считающей число корректных извлечений id
 	metrics.IncCounter(metrics.idConvCnt, "Atoi", entity, c.Param("id"))
-	metrics.ObserveCustomDur("l1", "l2", time.Second*10)
+	// metrics.ObserveCustomDur("l1", "l2", time.Second*10)
 	return id, nil
 }
 
@@ -132,43 +194,80 @@ func main() {
 	// Создаем и инициализируем объект, который хранит набор метрик
 	m := NewMetrics()
 	// Создаем миддлварь prometheus для echo-роутера
-	p := prometheus.NewPrometheus("demo", nil, []*prometheus.Metric{m.idConvCnt, m.idConvErrCnt, m.customDur})
+	p := prometheus.NewPrometheus("demo", nil, []*prometheus.Metric{
+		m.idConvCnt,
+		m.idConvErrCnt,
+		m.getEntityReqDuration,
+		m.activeRequests,
+		m.activeUserRequests,
+		m.activeNoteRequests,
+	})
 	// Добавляем миддлварь для echo-роутера
 	p.Use(r)
 	// Включаем миддлварь с кастомными метриками в цепь других миддлварей, которые стартуют после echo-роутера
 	r.Use(m.AddCustomMetricsMiddleware)
 
-	//Enpoints
+	//ENDPOINTS
 
 	//Get user by ID
 	r.GET("/user/get/:id", func(c echo.Context) error {
-		id, err := extractID(c)
+		// Получаем метрики из контекста по ключу
+		metrics := c.Get(cKeyMetrics).(*Metrics)
+		metrics.IncActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
+		metrics.IncActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+		start := time.Now()
+
+		id, err := extractID(c, metrics)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, err.Error())
+			metrics.ObserveGetEntityRequestDuration(http.MethodGet, "user", time.Since(start))
+			metrics.DecActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
+			metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+			return c.JSON(http.StatusBadRequest, err.Error())
 		}
 
 		for _, u := range users {
 			if u.ID == id {
+				metrics.ObserveGetEntityRequestDuration(http.MethodGet, "user", time.Since(start))
+				metrics.DecActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
+				metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 				return c.JSON(http.StatusOK, u)
 			}
 		}
 
+		metrics.ObserveGetEntityRequestDuration(http.MethodGet, "user", time.Since(start))
+		metrics.DecActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
+		metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 		return c.JSON(http.StatusNotFound, "user does not exist")
 	})
 
 	//Get note by ID
 	r.GET("/note/get/:id", func(c echo.Context) error {
-		id, err := extractID(c)
+		// Получаем метрики из контекста по ключу
+		metrics := c.Get(cKeyMetrics).(*Metrics)
+		metrics.IncActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
+		metrics.IncActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+		start := time.Now()
+
+		id, err := extractID(c, metrics)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, err.Error())
+			metrics.ObserveGetEntityRequestDuration(http.MethodGet, "note", time.Since(start))
+			metrics.DecActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
+			metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+			return c.JSON(http.StatusBadRequest, err.Error())
 		}
 
 		for _, n := range notes {
 			if n.ID == id {
+				metrics.ObserveGetEntityRequestDuration(http.MethodGet, "note", time.Since(start))
+				metrics.DecActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
+				metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 				return c.JSON(http.StatusOK, n)
 			}
 		}
 
+		metrics.ObserveGetEntityRequestDuration(http.MethodGet, "note", time.Since(start))
+		metrics.DecActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
+		metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 		return c.JSON(http.StatusNotFound, "note does not exist")
 	})
 
