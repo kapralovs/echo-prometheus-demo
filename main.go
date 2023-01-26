@@ -235,8 +235,8 @@ func main() {
 		}
 
 		metrics.ObserveGetEntityRequestDuration(http.MethodGet, "user", time.Since(start))
-		metrics.DecActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
-		metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+		//metrics.DecActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
+		//metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 		return c.JSON(http.StatusNotFound, "user does not exist")
 	})
 
@@ -245,14 +245,14 @@ func main() {
 		// Получаем метрики из контекста по ключу
 		metrics := c.Get(cKeyMetrics).(*Metrics)
 		metrics.IncActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
-		metrics.IncActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+		metrics.IncActiveNoteRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 		start := time.Now()
 
 		id, err := extractID(c, metrics)
 		if err != nil {
 			metrics.ObserveGetEntityRequestDuration(http.MethodGet, "note", time.Since(start))
 			metrics.DecActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
-			metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+			metrics.DecActiveNoteRequestsGauge(metrics.activeUserRequests, c.Param("id"))
 			return c.JSON(http.StatusBadRequest, err.Error())
 		}
 
@@ -267,8 +267,16 @@ func main() {
 
 		metrics.ObserveGetEntityRequestDuration(http.MethodGet, "note", time.Since(start))
 		metrics.DecActiveRequestsGauge(metrics.activeRequests, "note", c.Param("id"))
-		metrics.DecActiveUserRequestsGauge(metrics.activeUserRequests, c.Param("id"))
+		metrics.DecActiveNoteRequestsGauge(metrics.activeNoteRequests, c.Param("id"))
 		return c.JSON(http.StatusNotFound, "note does not exist")
+	})
+
+	r.GET("/dec", func(c echo.Context) error {
+		metrics := c.Get(cKeyMetrics).(*Metrics)
+		metrics.DecActiveRequestsGauge(metrics.activeRequests, "user", c.Param("id"))
+		metrics.DecActiveUserRequestsGauge(metrics.activeNoteRequests, c.Param("id"))
+
+		return c.JSON(http.StatusOK, "user's gauge metrics decrement")
 	})
 
 	r.Logger.Fatal(r.Start(":8080"))
